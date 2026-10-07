@@ -402,6 +402,9 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) input_bounds: Bounds<Pixels>,
     /// The text bounds
     pub(super) last_bounds: Option<Bounds<Pixels>>,
+    /// The window viewport size this input last asked its scroll containers
+    /// to reveal it at, while focused. `None` while unfocused.
+    pub(super) revealed_viewport: Option<gpui::Size<Pixels>>,
     pub(super) last_selected_range: Option<CursorSelection>,
     pub(super) selecting: bool,
     /// Anchor point of an in-progress columnar (block) selection.
@@ -781,6 +784,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             mode: LayoutMode::default(),
             last_layout: None,
             last_bounds: None,
+            revealed_viewport: None,
             last_selected_range: None,
             column_select_start: None,
             last_cursor: None,
