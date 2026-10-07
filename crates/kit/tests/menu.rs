@@ -3,6 +3,7 @@ use gpui_kit::component::{
     button::Button,
     input::{Copy, Input, InputState, SelectAll, Textarea, TextareaState},
     menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
+    text::{TextView, TextViewState},
 };
 use gpui_kit::test::{TestAppContextExt, TestSupportExt, TestWindowExt};
 use gpui_kit::{
@@ -608,6 +609,7 @@ fn submenu_select_all_uses_the_parent_input_action_target(cx: &mut TestAppContex
 
 struct LongPressMenus {
     input: Entity<InputState>,
+    text: Entity<TextViewState>,
 }
 
 impl Render for LongPressMenus {
@@ -633,6 +635,15 @@ impl Render for LongPressMenus {
                     .child(Input::new(&self.input).id("row-input"))
                     .context_menu(|menu, _, _| menu.menu("Copy", Box::new(Copy))),
             )
+            .child(
+                div()
+                    .id("text-row")
+                    .test_support()
+                    .w(px(320.))
+                    .h(px(80.))
+                    .child(TextView::new(&self.text).selectable(true))
+                    .context_menu(|menu, _, _| menu.menu("Copy", Box::new(Copy))),
+            )
     }
 }
 
@@ -656,6 +667,7 @@ fn long_press_menus(cx: &mut TestAppContext) -> (WindowHandle<Root>, Entity<Long
     common::open_window(cx, Some(size(px(640.), px(480.))), |window, cx| {
         cx.new(|cx| LongPressMenus {
             input: cx.new(|cx| InputState::new(window, cx).default_value("quick select")),
+            text: cx.new(|cx| TextViewState::markdown("quick select", cx)),
         })
     })
 }
@@ -698,6 +710,56 @@ fn long_press_on_an_input_in_a_context_menu_trigger_selects(cx: &mut TestAppCont
         window.render_frame(cx);
         assert_eq!(input.read(cx).selected_range(), 0..5);
         assert!(window.try_find("popup-menu").is_none());
+    })
+    .unwrap();
+}
+
+/// Window-level text selection takes priority over the trigger's menu.
+#[gpui_kit::test]
+fn long_press_on_text_in_a_context_menu_trigger_selects(cx: &mut TestAppContext) {
+    let (handle, _) = long_press_menus(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("text-row").bounds();
+        long_press(
+            window,
+            cx,
+            point(bounds.left() + px(24.), bounds.top() + px(10.)),
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            gpui_kit::base::TextSelection::selected_text(window, cx).trim(),
+            "quick"
+        );
+        assert!(gpui_kit::base::TextSelection::touch_selection(window, cx).is_some());
+        assert!(window.try_find("popup-menu").is_none());
+    })
+    .unwrap();
+}
+
+/// Blank space in a selectable text row still opens the object's menu.
+#[gpui_kit::test]
+fn long_press_on_blank_space_in_a_text_trigger_opens_the_menu(cx: &mut TestAppContext) {
+    let (handle, _) = long_press_menus(cx);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("text-row").bounds();
+        long_press(
+            window,
+            cx,
+            point(bounds.right() - px(12.), bounds.bottom() - px(12.)),
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(gpui_kit::base::TextSelection::selected_text(window, cx).is_empty());
+        assert!(window.try_find("popup-menu").is_some());
     })
     .unwrap();
 }
