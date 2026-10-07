@@ -1913,6 +1913,58 @@ impl<M: InputModeKind> TextElement<M> {
             .collect()
     }
 
+    /// Asks the scroll containers around a focused input to bring it into
+    /// view, once when it gains focus and again whenever the window viewport
+    /// changes size (an on-screen keyboard opening or closing), so manual
+    /// scrolling in between is left alone.
+    ///
+    /// A single-line input asks for all of itself. A taller one asks for the
+    /// line with the caret, or its top part when it has no caret.
+    fn request_reveal(
+        &self,
+        input_bounds: Bounds<Pixels>,
+        cursor_infos: &[CursorRenderInfo],
+        cursor_scroll_offset: Point<Pixels>,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        /// Room left around the request for the field's padding and border.
+        const REVEAL_MARGIN: Pixels = px(8.);
+        /// How much of a caretless multi-line input is revealed.
+        const REVEAL_MAX_HEIGHT: Pixels = px(120.);
+
+        let focused = self.state.read(cx).focus_handle.is_focused(window);
+        let viewport = window.viewport_size();
+        let reveal = self.state.update(cx, |state, _| {
+            let target = focused.then_some(viewport);
+            let changed = state.revealed_viewport != target;
+            state.revealed_viewport = target;
+            focused && changed
+        });
+        if !reveal || input_bounds.size.height <= px(0.) {
+            return;
+        }
+
+        let (top, height) = if !self.state.read(cx).is_multi_line() {
+            (input_bounds.top(), input_bounds.size.height)
+        } else if let Some(caret) = cursor_infos.iter().find(|info| info.is_active) {
+            let top = (caret.bounds.top() + cursor_scroll_offset.y)
+                .clamp(input_bounds.top(), input_bounds.bottom());
+            (top, line_height.min(input_bounds.bottom() - top))
+        } else {
+            (
+                input_bounds.top(),
+                input_bounds.size.height.min(REVEAL_MAX_HEIGHT),
+            )
+        };
+        let request = Bounds::new(
+            point(input_bounds.left(), top),
+            size(input_bounds.size.width, height),
+        );
+        window.request_autoscroll(request.dilate(REVEAL_MARGIN));
+    }
+
     fn prepaint_tokens(
         &self,
         layout: &LastLayout,
@@ -2945,6 +2997,14 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let fold_icon_layout =
             self.layout_fold_icons(original_x, &bounds, &last_layout, window, cx);
         let hitbox = window.insert_hitbox(input_bounds, HitboxBehavior::Normal);
+        self.request_reveal(
+            input_bounds,
+            &cursor_infos,
+            cursor_scroll_offset,
+            line_height,
+            window,
+            cx,
+        );
 
         let token_elements = self.prepaint_tokens(&last_layout, bounds, token_elements, window, cx);
         PrepaintState {
@@ -3566,8 +3626,8 @@ mod tests {
     use super::*;
     use crate::input::{EditorMode, EditorState, FoldRange, RangeDecoration, Redo, Undo};
     use gpui::{
-        AppContext as _, Context, EntityInputHandler as _, Render, TestAppContext,
-        VisualTestContext, div,
+        AppContext as _, Context, EntityInputHandler as _, Render, StatefulInteractiveElement as _,
+        TestAppContext, VisualTestContext, div,
     };
 
     #[test]
@@ -3615,6 +3675,76 @@ mod tests {
             DecorationHarness(state)
         });
         (editor.unwrap(), window)
+    }
+
+    struct RevealHarness {
+        input: Entity<crate::input::InputState>,
+        scroll_handle: gpui::ScrollHandle,
+    }
+
+    impl Render for RevealHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .id("scroller")
+                    .w_full()
+                    .h(px(100.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(div().h(px(300.)))
+                    .child(self.input.clone()),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn focused_input_asks_its_scroll_container_to_reveal_it(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let scroll_handle = gpui::ScrollHandle::new();
+        let mut input = None;
+        let window = cx.open_window(size(px(240.), px(200.)), |window, cx| {
+            let state = cx.new(|cx| crate::input::InputState::new(window, cx));
+            input = Some(state.clone());
+            RevealHarness {
+                input: state,
+                scroll_handle: scroll_handle.clone(),
+            }
+        });
+        let input = input.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            })
+        };
+        let revealed = |cx: &mut VisualTestContext| {
+            let bounds = cx.update(|_, cx| input.read(cx).input_bounds());
+            bounds.top() >= px(0.) && bounds.bottom() <= px(100.)
+        };
+
+        draw(&mut cx);
+        assert_eq!(scroll_handle.offset().y, px(0.));
+        assert!(!revealed(&mut cx));
+
+        // Gaining focus reveals the input.
+        cx.update(|window, cx| input.update(cx, |state, cx| state.focus(window, cx)));
+        draw(&mut cx);
+        draw(&mut cx);
+        assert!(scroll_handle.offset().y < px(0.));
+        assert!(revealed(&mut cx));
+
+        // Scrolling away while focused is left alone.
+        scroll_handle.set_offset(gpui::point(px(0.), px(0.)));
+        draw(&mut cx);
+        draw(&mut cx);
+        assert_eq!(scroll_handle.offset().y, px(0.));
+
+        // A viewport resize (an on-screen keyboard) reveals it again.
+        cx.simulate_resize(size(px(240.), px(150.)));
+        draw(&mut cx);
+        draw(&mut cx);
+        assert!(revealed(&mut cx));
     }
 
     #[gpui::test]
