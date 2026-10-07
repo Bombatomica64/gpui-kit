@@ -2342,6 +2342,14 @@ impl<M: InputModeKind> InputBaseState<M> {
         if window.default_prevented() {
             return;
         }
+        // A tap on an input that already has focus asks for the virtual
+        // keyboard back, after the user hid it without leaving the input.
+        if event.button == MouseButton::Left
+            && crate::GlobalState::is_touch_press(cx)
+            && self.focus_handle.is_focused(window)
+        {
+            window.request_virtual_keyboard();
+        }
         self.undo_manager.break_transaction_coalescing();
         // Input has its own text selection; suppress the window-level text
         // selection (Root) so it does not start a drag from here.
