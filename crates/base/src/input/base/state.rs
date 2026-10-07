@@ -2309,11 +2309,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         if window.default_prevented() {
             return;
         }
-        // A tap on an input that already has focus asks for the virtual
-        // keyboard back, after the user hid it without leaving the input.
+        // A tap asks for the virtual keyboard. Focus alone does not when it
+        // moves from another input, or stays here, after the user hid it.
         if event.button == MouseButton::Left
             && crate::GlobalState::is_touch_press(cx)
-            && self.focus_handle.is_focused(window)
+            && !self.disabled
+            && !self.readonly
         {
             window.request_virtual_keyboard();
         }
