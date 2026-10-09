@@ -687,6 +687,7 @@ impl RenderOnce for Input {
             presentation.focus_handle().is_focused(window) && !presentation.is_disabled();
         if input_focused {
             sync_native_content_type(window, content_type, presentation.is_editable());
+            state.set_content_purpose(content_type.and_then(InputContentType::input_purpose), cx);
         }
         let frame_focus_handle = window
             .use_keyed_state(("input-frame-focus", state.entity_id()), cx, |_, cx| {
