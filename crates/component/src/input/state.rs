@@ -72,6 +72,15 @@ impl TextInputState {
             .install_token_hover_presentation(hover_listener)))
     }
 
+    pub(crate) fn set_content_purpose(
+        &self,
+        purpose: Option<gpui::TextInputPurpose>,
+        cx: &mut App,
+    ) {
+        dispatch!(self, |state| state.update(cx, |state, _| state
+            .set_content_purpose(purpose)))
+    }
+
     pub(crate) fn entity_id(&self) -> gpui::EntityId {
         dispatch!(self, |state| state.entity_id())
     }

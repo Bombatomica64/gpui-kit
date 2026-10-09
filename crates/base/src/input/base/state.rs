@@ -10,7 +10,7 @@ use gpui::{
     Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
     UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
 };
-use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration};
+use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration, TextInputPurpose};
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -414,12 +414,18 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(crate) readonly: bool,
     pub(crate) text_align: TextAlign,
     pub(super) masked: bool,
+    /// Whether this is a password field, which stays true while
+    /// [`Self::toggle_masked`] reveals the text.
+    pub(super) password: bool,
     pub(super) clean_on_escape: bool,
     pub(super) submit_on_enter: bool,
     /// Overrides for [`Self::text_input_configuration`].
     pub(super) input_action: Option<TextInputAction>,
     pub(super) autocorrect: Option<bool>,
     pub(super) autocapitalize: Option<Autocapitalize>,
+    pub(super) input_purpose: Option<TextInputPurpose>,
+    /// What the component wrapping this state says the input holds.
+    pub(super) content_purpose: Option<TextInputPurpose>,
     pub(super) show_whitespaces: bool,
     /// This flag tells the renderer to prefer the end of the current visual line.
     pub(crate) cursor_line_end_affinity: bool,
@@ -755,11 +761,14 @@ impl<M: InputModeKind> InputBaseState<M> {
             readonly: false,
             text_align: TextAlign::Left,
             masked: false,
+            password: false,
             clean_on_escape: false,
             submit_on_enter: false,
             input_action: None,
             autocorrect: None,
             autocapitalize: None,
+            input_purpose: None,
+            content_purpose: None,
             show_whitespaces: false,
             loading: false,
             pattern: None,
@@ -1209,11 +1218,52 @@ impl<M: InputModeKind> InputBaseState<M> {
         self
     }
 
+    /// Set what the input holds, which picks the software keyboard (digits,
+    /// phone pad, email) and keeps passwords out of its suggestions, like
+    /// React Native's `keyboardType` and `secureTextEntry`.
+    ///
+    /// Default is [`TextInputPurpose::Password`] for a masked input (numeric
+    /// with a digits-only mask pattern), [`TextInputPurpose::Numeric`] or
+    /// [`TextInputPurpose::Decimal`] for a number or digits-only mask pattern,
+    /// and otherwise what the `Input`'s content type implies.
+    pub fn input_purpose(mut self, purpose: TextInputPurpose) -> Self {
+        self.input_purpose = Some(purpose);
+        self
+    }
+
+    /// Set the purpose implied by the component's content type; see
+    /// [`Self::input_purpose`].
+    #[doc(hidden)]
+    pub fn set_content_purpose(&mut self, purpose: Option<TextInputPurpose>) {
+        self.content_purpose = purpose;
+    }
+
+    fn resolved_input_purpose(&self) -> TextInputPurpose {
+        if let Some(purpose) = self.input_purpose {
+            return purpose;
+        }
+        let mask_purpose = self.mask_pattern.input_purpose();
+        if self.masked || self.password {
+            return match mask_purpose {
+                Some(_) => TextInputPurpose::NumericPassword,
+                None => TextInputPurpose::Password,
+            };
+        }
+        mask_purpose
+            .or(self.content_purpose)
+            .unwrap_or(TextInputPurpose::Text)
+    }
+
     /// The text assistance a platform IME (a software keyboard) should give
-    /// this input, from [`Self::input_action`], [`Self::autocorrect`] and
-    /// [`Self::autocapitalize`] or the defaults they describe.
+    /// this input, from [`Self::input_action`], [`Self::autocorrect`],
+    /// [`Self::autocapitalize`] and [`Self::input_purpose`] or the defaults they
+    /// describe.
     pub fn text_input_configuration(&self) -> TextInputConfiguration {
-        let plain_text = !self.masked && self.mask_pattern.is_none() && !self.is_code_editor();
+        let purpose = self.resolved_input_purpose();
+        let plain_text = matches!(purpose, TextInputPurpose::Text | TextInputPurpose::Search)
+            && !self.masked
+            && self.mask_pattern.is_none()
+            && !self.is_code_editor();
         let autocorrect = self.autocorrect.unwrap_or(plain_text);
         let input_action = self.input_action.unwrap_or(
             if self.is_multi_line() && !self.submit_on_enter {
@@ -1231,7 +1281,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             }),
             suggestions: autocorrect,
             input_action,
-            ..Default::default()
+            purpose,
         }
     }
 
@@ -4705,10 +4755,17 @@ mod tests {
                         .input_action(TextInputAction::Search)
                         .autocapitalize(Autocapitalize::None)
                 }),
+                cx.new(|cx| {
+                    InputState::new(window, cx).mask_pattern(MaskPattern::Number {
+                        separator: Some(','),
+                        fraction: Some(2),
+                    })
+                }),
+                cx.new(|cx| InputState::new(window, cx).mask_pattern("(999) 999-9999")),
             ));
             gpui::EmptyView
         });
-        let (plain, masked, textarea, search) = states.unwrap();
+        let (plain, masked, textarea, search, amount, phone) = states.unwrap();
 
         cx.read(|cx| {
             assert_eq!(
@@ -4725,6 +4782,7 @@ mod tests {
                 masked.read(cx).text_input_configuration(),
                 TextInputConfiguration {
                     input_action: TextInputAction::Done,
+                    purpose: TextInputPurpose::Password,
                     ..Default::default()
                 }
             );
@@ -4736,6 +4794,30 @@ mod tests {
             assert_eq!(search.input_action, TextInputAction::Search);
             assert_eq!(search.autocapitalize, Autocapitalize::None);
             assert!(search.autocorrect);
+            assert_eq!(
+                amount.read(cx).text_input_configuration().purpose,
+                TextInputPurpose::Decimal
+            );
+            assert_eq!(
+                phone.read(cx).text_input_configuration().purpose,
+                TextInputPurpose::Numeric
+            );
+        });
+
+        // Revealing a password does not make it ordinary text for the keyboard.
+        cx.update(|cx| {
+            let window = *cx.windows().first().unwrap();
+            window
+                .update(cx, |_, window, cx| {
+                    masked.update(cx, |state, cx| state.toggle_masked(window, cx))
+                })
+                .unwrap();
+        });
+        cx.read(|cx| {
+            assert_eq!(
+                masked.read(cx).text_input_configuration().purpose,
+                TextInputPurpose::Password
+            );
         });
     }
 
@@ -10661,12 +10743,14 @@ impl InputBaseState<crate::input::InputMode> {
     /// Set with password masked state.
     pub fn masked(mut self, masked: bool) -> Self {
         self.masked = masked;
+        self.password |= masked;
         self
     }
 
     /// Set the password masked state of the input field.
     pub fn set_masked(&mut self, masked: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.masked = masked;
+        self.password |= masked;
         cx.notify();
     }
 
