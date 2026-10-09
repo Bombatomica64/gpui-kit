@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use gpui::SharedString;
+use gpui::{SharedString, TextInputPurpose};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum MaskToken {
@@ -154,6 +154,26 @@ impl MaskPattern {
             }
             Self::Number { .. } => None,
             Self::None => None,
+        }
+    }
+
+    /// What a field with this mask holds, for the software keyboard: digits for a
+    /// number or an all-digit pattern, `None` when letters are allowed.
+    pub(crate) fn input_purpose(&self) -> Option<TextInputPurpose> {
+        match self {
+            Self::Number { fraction, .. } if fraction.is_some_and(|digits| digits > 0) => {
+                Some(TextInputPurpose::Decimal)
+            }
+            Self::Number { .. } => Some(TextInputPurpose::Numeric),
+            Self::Pattern { tokens, .. }
+                if !tokens.is_empty()
+                    && tokens
+                        .iter()
+                        .all(|token| token.is_number() || matches!(token, MaskToken::Sep(_))) =>
+            {
+                Some(TextInputPurpose::Numeric)
+            }
+            Self::Pattern { .. } | Self::None => None,
         }
     }
 
