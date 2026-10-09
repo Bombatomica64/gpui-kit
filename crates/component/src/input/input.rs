@@ -676,7 +676,15 @@ impl RenderOnce for Input {
         let content_type = self.content_type;
         let disabled = self.disabled;
         let is_multi_line = presentation.is_multi_line();
-        let accessibility_role = accessibility_role(is_multi_line, content_type, self.role);
+        // A masked input is a password field to screen readers whatever its content
+        // type, so they announce it as one and don't echo its characters.
+        let accessibility_role = accessibility_role(
+            is_multi_line,
+            content_type.or(presentation
+                .is_masked()
+                .then_some(InputContentType::Password)),
+            self.role,
+        );
         let accessibility_state = state.clone();
         // Tests read the same accessibility value as assistive technology.
         // Avoid materializing the rope in normal builds without a client.
