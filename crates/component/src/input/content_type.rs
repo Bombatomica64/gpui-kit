@@ -1,4 +1,4 @@
-use gpui::Window;
+use gpui::{TextInputPurpose, Window};
 
 /// Semantic content type for an [`Input`](super::Input).
 ///
@@ -98,6 +98,24 @@ pub enum InputContentType {
 }
 
 impl InputContentType {
+    /// What a software keyboard should expect for this content.
+    pub(crate) fn input_purpose(self) -> Option<TextInputPurpose> {
+        match self {
+            Self::TelephoneNumber => Some(TextInputPurpose::Phone),
+            Self::EmailAddress => Some(TextInputPurpose::Email),
+            Self::Url => Some(TextInputPurpose::Url),
+            Self::Password | Self::NewPassword => Some(TextInputPurpose::Password),
+            Self::CreditCardNumber
+            | Self::CreditCardSecurityCode
+            | Self::CreditCardExpirationMonth
+            | Self::CreditCardExpirationYear
+            | Self::BirthdateDay
+            | Self::BirthdateMonth
+            | Self::BirthdateYear => Some(TextInputPurpose::Numeric),
+            _ => None,
+        }
+    }
+
     #[cfg(target_os = "macos")]
     pub(crate) const fn ns_text_content_type(self) -> Option<&'static str> {
         match self {
