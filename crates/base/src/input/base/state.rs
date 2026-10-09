@@ -1165,6 +1165,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     }
 
     /// Set true to clear the input by pressing Escape key.
+    ///
+    /// Not on Android, where Escape is also the back button.
     pub fn clean_on_escape(mut self) -> Self {
         self.clean_on_escape = true;
         self
@@ -2131,7 +2133,9 @@ impl<M: InputModeKind> InputBaseState<M> {
             self.unmark_text(window, cx);
         }
 
-        if self.clean_on_escape {
+        // Android delivers its back button as escape, and back leaves a field's
+        // text alone: it closes what is open or navigates.
+        if self.clean_on_escape && !cfg!(target_os = "android") {
             return self.clean(window, cx);
         }
 
