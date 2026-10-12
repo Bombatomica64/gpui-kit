@@ -1985,8 +1985,9 @@ impl<M: InputModeKind> TextElement<M> {
     }
 
     /// Asks the scroll containers around a focused input to bring it into
-    /// view, once when it gains focus and again whenever the window viewport
-    /// changes size (an on-screen keyboard opening or closing), so manual
+    /// view, once when it gains focus and again whenever the fully visible
+    /// part of the window changes (an on-screen keyboard opening or closing,
+    /// whether it resizes the window or is reported as an inset), so manual
     /// scrolling in between is left alone.
     ///
     /// A single-line input asks for all of itself. A taller one asks for the
@@ -2006,7 +2007,7 @@ impl<M: InputModeKind> TextElement<M> {
         const REVEAL_MAX_HEIGHT: Pixels = px(120.);
 
         let focused = self.state.read(cx).focus_handle.is_focused(window);
-        let viewport = window.viewport_size();
+        let viewport = window.fully_visible_bounds();
         let reveal = self.state.update(cx, |state, _| {
             let target = focused.then_some(viewport);
             let changed = state.revealed_viewport != target;
