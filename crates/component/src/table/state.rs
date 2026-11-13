@@ -1751,6 +1751,9 @@ where
             .id(id)
             .occlude()
             .cursor_col_resize()
+            // A finger on the handle resizes at once rather than scrolling
+            // the header sideways.
+            .drag_handle()
             .on_drag_move(
                 cx.listener(move |view, e: &DragMoveEvent<ResizeColumn>, window, cx| {
                     match e.drag(cx) {
@@ -2843,102 +2846,114 @@ where
             .size_full()
             .overflow_hidden()
             .child(self.render_table_header(scrollable_cols.clone(), window, cx))
-            .context_menu({
-                let view = cx.entity();
-                move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
-                    if let Some(row_ix) = view.read(cx).right_clicked_row {
-                        view.update(cx, |menu, cx| {
-                            menu.delegate_mut().context_menu(row_ix, this, window, cx)
-                        })
-                    } else {
-                        this
-                    }
-                }
-            })
             .map(|this| {
                 if rows_count == 0 {
                     this.children(empty_view)
                 } else {
+                    // The rows' context menu covers the body only: a long
+                    // press on the header picks a column up to move it.
                     this.child(
-                        h_flex().id("table-body").flex_grow_1().size_full().child(
-                            uniform_list(
-                                "table-uniform-list",
-                                render_rows_count,
-                                cx.processor(
-                                    move |table, visible_range: Range<usize>, window, cx| {
-                                        // Use `col.width` (always up-to-date) rather than
-                                        // `col.bounds.size.width`, which is only set after
-                                        // prepaint and is therefore zero on the first frame.
-                                        let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
-                                            table
-                                                .col_groups
-                                                .get(scrollable_cols.clone())
-                                                .unwrap_or_default()
-                                                .iter()
-                                                .map(|col| gpui::Size {
-                                                    width: col.width,
-                                                    height: px(0.),
-                                                })
-                                                .collect(),
-                                        );
-
-                                        table.load_more_if_need(
-                                            rows_count,
-                                            visible_range.end,
-                                            window,
-                                            cx,
-                                        );
-                                        table.update_visible_range_if_need(
-                                            visible_range.clone(),
-                                            rows_count,
-                                            Axis::Vertical,
-                                            window,
-                                            cx,
-                                        );
-
-                                        if visible_range.start >= rows_count {
-                                            table.scroll_to_row(rows_count.saturating_sub(1), cx);
-                                        }
-
-                                        let mut items = Vec::with_capacity(
-                                            visible_range.end.saturating_sub(visible_range.start),
-                                        );
-
-                                        // Render fake rows to fill the table
-                                        visible_range.for_each(|row_ix| {
-                                            // Render real rows for available data
-                                            items.push(table.render_table_row(
-                                                row_ix,
-                                                rows_count,
-                                                scrollable_cols.clone(),
-                                                col_sizes.clone(),
-                                                columns_count,
-                                                is_filled,
-                                                window,
-                                                cx,
-                                            ));
-                                        });
-
-                                        items
-                                    },
-                                ),
-                            )
+                        h_flex()
+                            .id("table-body")
                             .flex_grow_1()
                             .size_full()
-                            .with_sizing_behavior(ListSizingBehavior::Auto)
-                            .track_scroll(&self.vertical_scroll_handle)
-                            .map(|rows| {
-                                gpui_base::ScrollBounce::new(
-                                    "table-scroll-bounce",
-                                    &self.vertical_scroll_handle,
-                                    rows,
-                                )
-                                .when_some(self.options.scroll_bounce, |bounce, on| {
-                                    bounce.enabled(on)
-                                })
+                            .context_menu({
+                                let view = cx.entity();
+                                move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
+                                    if let Some(row_ix) = view.read(cx).right_clicked_row {
+                                        view.update(cx, |menu, cx| {
+                                            menu.delegate_mut()
+                                                .context_menu(row_ix, this, window, cx)
+                                        })
+                                    } else {
+                                        this
+                                    }
+                                }
                             })
-                            .into_any_element(),
-                        ),
+                            .child(
+                                uniform_list(
+                                    "table-uniform-list",
+                                    render_rows_count,
+                                    cx.processor(
+                                        move |table, visible_range: Range<usize>, window, cx| {
+                                            // Use `col.width` (always up-to-date) rather than
+                                            // `col.bounds.size.width`, which is only set after
+                                            // prepaint and is therefore zero on the first frame.
+                                            let col_sizes: Rc<Vec<gpui::Size<Pixels>>> = Rc::new(
+                                                table
+                                                    .col_groups
+                                                    .get(scrollable_cols.clone())
+                                                    .unwrap_or_default()
+                                                    .iter()
+                                                    .map(|col| gpui::Size {
+                                                        width: col.width,
+                                                        height: px(0.),
+                                                    })
+                                                    .collect(),
+                                            );
+
+                                            table.load_more_if_need(
+                                                rows_count,
+                                                visible_range.end,
+                                                window,
+                                                cx,
+                                            );
+                                            table.update_visible_range_if_need(
+                                                visible_range.clone(),
+                                                rows_count,
+                                                Axis::Vertical,
+                                                window,
+                                                cx,
+                                            );
+
+                                            if visible_range.start >= rows_count {
+                                                table.scroll_to_row(
+                                                    rows_count.saturating_sub(1),
+                                                    cx,
+                                                );
+                                            }
+
+                                            let mut items = Vec::with_capacity(
+                                                visible_range
+                                                    .end
+                                                    .saturating_sub(visible_range.start),
+                                            );
+
+                                            // Render fake rows to fill the table
+                                            visible_range.for_each(|row_ix| {
+                                                // Render real rows for available data
+                                                items.push(table.render_table_row(
+                                                    row_ix,
+                                                    rows_count,
+                                                    scrollable_cols.clone(),
+                                                    col_sizes.clone(),
+                                                    columns_count,
+                                                    is_filled,
+                                                    window,
+                                                    cx,
+                                                ));
+                                            });
+
+                                            items
+                                        },
+                                    ),
+                                )
+                                .flex_grow_1()
+                                .size_full()
+                                .with_sizing_behavior(ListSizingBehavior::Auto)
+                                .track_scroll(&self.vertical_scroll_handle)
+                                .map(|rows| {
+                                    gpui_base::ScrollBounce::new(
+                                        "table-scroll-bounce",
+                                        &self.vertical_scroll_handle,
+                                        rows,
+                                    )
+                                    .when_some(self.options.scroll_bounce, |bounce, on| {
+                                        bounce.enabled(on)
+                                    })
+                                })
+                                .into_any_element(),
+                            ),
                     )
                 }
             });
