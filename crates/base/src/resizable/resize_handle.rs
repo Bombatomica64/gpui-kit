@@ -299,9 +299,12 @@ impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
                 .flex_shrink_0()
                 .group("handle")
                 .when_some(drag, |this, (value, on_drag)| {
-                    this.on_drag(value, move |value, position, window, cx| {
-                        on_drag(value, &position, window, cx)
-                    })
+                    // A finger on the handle resizes at once, also along the
+                    // axis an enclosing scroll container scrolls.
+                    this.drag_handle()
+                        .on_drag(value, move |value, position, window, cx| {
+                            on_drag(value, &position, window, cx)
+                        })
                 })
                 .map(|this| match (edge, axis) {
                     // Hugging an edge: the whole band is inside the container,
